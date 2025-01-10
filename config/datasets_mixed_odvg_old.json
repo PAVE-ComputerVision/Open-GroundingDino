@@ -1,0 +1,18 @@
+{
+  "train": [
+    {
+      "root": "/home/ubuntu/roisul/custom/train",
+      "anno": "/home/ubuntu/roisul/input_params/train.jsonl",
+      "label_map": "/home/ubuntu/roisul/input_params/label.json",
+      "dataset_mode": "odvg"
+    }
+  ],
+  "val": [
+    {
+      "root": "/home/ubuntu/roisul/custom/test",
+      "anno": "/home/ubuntu/roisul/custom/test/_annotations.coco.json",
+      "label_map": null,
+      "dataset_mode": "coco"
+    }
+  ]
+}
