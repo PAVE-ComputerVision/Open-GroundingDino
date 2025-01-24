@@ -336,14 +336,17 @@ class MultiScaleDeformableAttention(nn.Module):
                 sampling_locations = sampling_locations.float()
                 attention_weights = attention_weights.float()
 
-            output = MultiScaleDeformableAttnFunction.apply(
-                value,
-                spatial_shapes,
-                level_start_index,
-                sampling_locations,
-                attention_weights,
-                self.im2col_step,
+            output = multi_scale_deformable_attn_pytorch(
+                value, spatial_shapes, sampling_locations, attention_weights
             )
+            #output = MultiScaleDeformableAttnFunction.apply(
+            #    value,
+            #    spatial_shapes,
+            #    level_start_index,
+            #    sampling_locations,
+            #    attention_weights,
+            #    self.im2col_step,
+            #)
 
             if halffloat:
                 output = output.half()

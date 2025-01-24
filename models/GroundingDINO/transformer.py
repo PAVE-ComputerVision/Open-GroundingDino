@@ -25,7 +25,8 @@ from torch import Tensor, nn
 from groundingdino.util.misc import inverse_sigmoid
 
 from .fuse_modules import BiAttentionBlock
-from .ms_deform_attn import MultiScaleDeformableAttention as MSDeformAttn
+#from .ms_deform_attn import MultiScaleDeformableAttention as MSDeformAttn
+from mmcv.ops.multi_scale_deform_attn import MultiScaleDeformableAttention as MSDeformAttn
 from .transformer_vanilla import TransformerEncoderLayer
 from .utils import (
     MLP,
@@ -192,7 +193,7 @@ class Transformer(nn.Module):
                 nn.init.xavier_uniform_(p)
         for m in self.modules():
             if isinstance(m, MSDeformAttn):
-                m._reset_parameters()
+                m.init_weights()
         if self.num_feature_levels > 1 and self.level_embed is not None:
             nn.init.normal_(self.level_embed)
 
@@ -758,7 +759,7 @@ class DeformableTransformerEncoderLayer(nn.Module):
 
         # self attention
         self.self_attn = MSDeformAttn(
-            embed_dim=d_model,
+            embed_dims=d_model,
             num_levels=n_levels,
             num_heads=n_heads,
             num_points=n_points,
@@ -824,7 +825,7 @@ class DeformableTransformerDecoderLayer(nn.Module):
 
         # cross attention
         self.cross_attn = MSDeformAttn(
-            embed_dim=d_model,
+            embed_dims=d_model,
             num_levels=n_levels,
             num_heads=n_heads,
             num_points=n_points,
