@@ -19,18 +19,18 @@ import util.misc as utils
 
 import datasets
 from datasets import build_dataset, get_coco_api_from_dataset
-from engine import evaluate, train_one_epoch
+from engine_multi import evaluate, train_one_epoch
 
 from groundingdino.util.utils import clean_state_dict
 import warnings
 warnings.filterwarnings("ignore")
 
-import mmcv
-from mmcv.runner import (get_dist_info, init_dist, load_checkpoint,
-                         wrap_fp16_model)
+#import mmcv
+#from mmcv.runner import (get_dist_info, init_dist, load_checkpoint,
+#                         wrap_fp16_model)
 import os.path as osp
-from mmseg.models import build_segmentor
-from mmseg.datasets import build_dataset as rep_build_dataset
+#from mmseg.models import build_segmentor
+#from mmseg.datasets import build_dataset as rep_build_dataset
 
 def get_args_parser():
     parser = argparse.ArgumentParser('Set transformer detector', add_help=False)
@@ -291,7 +291,7 @@ def main(args):
                                   weight_decay=args.weight_decay)
 
     #Add repvit
-    repvit_model, rep_eval_on_format_results, rep_eval_kwargs = repvit_stuff()
+    #repvit_model, rep_eval_on_format_results, rep_eval_kwargs = repvit_stuff()
     
     logger.debug("build dataset ... ...")
     if not args.eval:
@@ -404,7 +404,7 @@ def main(args):
             sampler_train.set_epoch(epoch)
 
         train_stats = train_one_epoch(
-            model, criterion, data_loader_train, repvit_model, rep_eval_on_format_results, rep_eval_kwargs, optimizer, device, epoch, args.clip_max_norm, wo_class_error=wo_class_error, lr_scheduler=lr_scheduler, args=args, logger=(logger if args.save_log else None))
+            model, criterion, data_loader_train, optimizer, device, epoch, args.clip_max_norm, wo_class_error=wo_class_error, lr_scheduler=lr_scheduler, args=args, logger=(logger if args.save_log else None))
         train_loss_lst.append(train_stats["loss"])
         torch.save(train_loss_lst, os.path.join(output_dir, 'train_loss.pt'))
         if args.output_dir:
@@ -431,7 +431,7 @@ def main(args):
                 
         # eval
         test_stats, coco_evaluator, loss_value = evaluate(
-            model, criterion, repvit_model, rep_eval_on_format_results, rep_eval_kwargs, postprocessors, data_loader_val, base_ds, device, args.output_dir,
+            model, criterion, postprocessors, data_loader_val, base_ds, device, args.output_dir,
             wo_class_error=wo_class_error, args=args, logger=(logger if args.save_log else None)
         )
         loss_track.append(loss_value)

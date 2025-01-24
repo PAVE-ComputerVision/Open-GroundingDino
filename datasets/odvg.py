@@ -79,8 +79,8 @@ class ODDataset(VisionDataset):
         boxes = [obj["bbox"] for obj in instances]
         
         #class_weights =  [obj['weight'] for obj in instances]
-        #car_bboxes = [obj["car_bbox"] for obj in instances]
-        #car_bboxes = [car_bboxes[0]]
+        car_bboxes = [obj["car_bbox"] for obj in instances]
+        car_bboxes = [car_bboxes[0]]
 
         # generate vg_labels
         # pos bbox labels
@@ -108,7 +108,7 @@ class ODDataset(VisionDataset):
         boxes = torch.as_tensor(boxes, dtype=torch.float32).reshape(-1, 4)
         classes = torch.tensor(classes, dtype=torch.int64)
 
-        #car_bboxes = torch.as_tensor(car_bboxes, dtype=torch.float32).reshape(-1, 4)
+        car_bboxes = torch.as_tensor(car_bboxes, dtype=torch.float32).reshape(-1, 4)
         
         target = {}
         target["size"] = torch.as_tensor([int(h), int(w)])
@@ -116,7 +116,7 @@ class ODDataset(VisionDataset):
         target["caption"] = caption
         target["boxes"] = boxes
         target["labels"] = classes
-        #target["car_bboxes"] = car_bboxes
+        target["car_bboxes"] = car_bboxes
         #target["class_weights"] = class_weights
         # size, cap_list, caption, bboxes, labels
         #print(target)
@@ -126,10 +126,10 @@ class ODDataset(VisionDataset):
     
 
     def __len__(self) -> int:
-        if len(self.metas) < 16000:
+        if len(self.metas) < 10000:
             return len(self.metas)
         else:
-            return 16000
+            return 10000
         #return 1000#len(self.metas)
 
 class ODVGDataset(VisionDataset):
@@ -267,10 +267,10 @@ class ODVGDataset(VisionDataset):
     
 
     def __len__(self) -> int:
-        if len(self.metas) < 16000:
+        if len(self.metas) < 10000:
             return len(self.metas)
         else:
-            return 16000
+            return 10000
         #return 10000#len(self.metas)
 
 

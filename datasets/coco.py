@@ -418,6 +418,10 @@ class ConvertCocoPolysToMask(object):
 
         anno = [obj for obj in anno if 'iscrowd' not in obj or obj['iscrowd'] == 0]
 
+        car_bboxes = [obj["car_bbox"] for obj in anno]
+        car_bboxes = [car_bboxes[0]]
+        car_bboxes = torch.as_tensor(car_bboxes, dtype=torch.float32).reshape(-1, 4)
+
         boxes = [obj["bbox"] for obj in anno]
         # guard against no boxes via resizing
         boxes = torch.as_tensor(boxes, dtype=torch.float32).reshape(-1, 4)
@@ -450,6 +454,7 @@ class ConvertCocoPolysToMask(object):
 
         target = {}
         target["boxes"] = boxes
+        target["car_bboxes"] = car_bboxes
         target["labels"] = classes
         if self.return_masks:
             target["masks"] = masks
@@ -465,7 +470,6 @@ class ConvertCocoPolysToMask(object):
 
         target["orig_size"] = torch.as_tensor([int(h), int(w)])
         target["size"] = torch.as_tensor([int(h), int(w)])
-
         return image, target
 
 

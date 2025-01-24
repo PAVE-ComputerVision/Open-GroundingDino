@@ -18,6 +18,7 @@ from datasets.cocogrounding_eval import CocoGroundingEvaluator
 
 from datasets.panoptic_eval import PanopticEvaluator
 from groundingdino.util.utils import clean_state_dict, get_phrases_from_posmap
+from crop_utils import create_crops_v3
 
 #NOTE: Repvit merge modifications here
 from tqdm.auto import tqdm
@@ -26,6 +27,7 @@ import torchvision.transforms as T
 from transformers import get_scheduler
 from torch.utils.data import DataLoader
 from torch.utils.data.sampler import WeightedRandomSampler
+from torchvision.utils import save_image, draw_bounding_boxes
 
 from sklearn.metrics import precision_score, recall_score
 from sklearn.metrics import confusion_matrix, precision_score, recall_score
@@ -38,16 +40,16 @@ import time
 import warnings
 import time
 
-from mmcv.parallel import MMDataParallel, MMDistributedDataParallel
-from mmcv.utils import DictAction
+#from mmcv.parallel import MMDataParallel, MMDistributedDataParallel
+#from mmcv.utils import DictAction
 
-from mmseg.apis import multi_gpu_test, single_gpu_test
+#from mmseg.apis import multi_gpu_test, single_gpu_test
 from PIL import Image
 
 import sys
-sys.path.append('/home/ubuntu/roisul/RepViT/segmentation')
-import repvit
-from align_resize import AlignResize
+#sys.path.append('/home/ubuntu/roisul/RepViT/segmentation')
+#import repvit
+#from align_resize import AlignResize
 import numpy as np
 
 #Debug visualization imports
@@ -255,145 +257,69 @@ def adjust_bounding_box(bbox, ori_img_shape, crop_size=(512, 512)):
     
     return torch.tensor([x_min, y_min, x_max, y_max])
 
-def create_crops(image_tensor, ori_tensor, bbox, crop_size=(512, 512)):
-    """
-    Create 512x512 crops from the adjusted bounding box tensor.
-
-    Parameters:
-    - bbox: A tensor with the format [x_min, y_min, x_max, y_max].
-    - crop_size: Size of the crops (width, height).
-
-    Returns:
-    - A list of tuples representing the top-left and bottom-right coordinates of each crop.
-    """
-    crop_width, crop_height = crop_size
-    x_min, y_min, x_max, y_max = bbox.tolist()  # Convert tensor to list
-
-    crops = []
-    ori_crops = []
-    crop_bboxes = []
-    
-    # Loop through the adjusted bounding box in steps of crop size
-    for x in range(x_min, x_max, crop_width):
-        for y in range(y_min, y_max, crop_height):
-            top_left = (x, y)
-            bottom_right = (x + crop_width, y + crop_height)
-            if((x + crop_width < 1920) and (y + crop_width < 1080)):
-                crop = image_tensor[:, :, y:y+crop_width, x:x+crop_width]
-                ori_crop = ori_tensor[:, y:y+crop_width, x:x+crop_width]
-                crops.append(crop)
-                ori_crops.append(ori_crop)
-                crop_bboxes.append((top_left,bottom_right))
-    
-    return crops, ori_crops, crop_bboxes
-
-def create_crops_v2(image_tensor, ori_tensor, bbox, crop_size=(512, 512), stride=(256, 256)):
-    """
-    Create overlapping crops from the adjusted bounding box tensor.
-
-    Parameters:
-    - image_tensor: The image tensor to crop from.
-    - ori_tensor: The original tensor to crop from.
-    - bbox: A tensor with the format [x_min, y_min, x_max, y_max].
-    - crop_size: Size of the crops (width, height).
-    - stride: Step size for the sliding window (overlap control).
-
-    Returns:
-    - A list of crops, original image crops, and their respective bounding boxes.
-    """
-    crop_width, crop_height = crop_size
-    stride_x, stride_y = stride
-
-    x_min, y_min, x_max, y_max = bbox.tolist()  # Convert tensor to list
-
-    crops = []
-    ori_crops = []
-    crop_bboxes = []
-
-    # Loop through the adjusted bounding box with overlap using stride
-    for x in range(x_min, x_max, stride_x):
-        for y in range(y_min, y_max, stride_y):
-            # Ensure the crop does not exceed image dimensions
-            x_end = min(x + crop_width, image_tensor.shape[-1])
-            y_end = min(y + crop_height, image_tensor.shape[-2])
-            
-            if (x_end - x == crop_width) and (y_end - y == crop_height):
-                top_left = (x, y)
-                bottom_right = (x_end, y_end)
-                
-                # Crop from the image tensor
-                crop = image_tensor[:, :, y:y_end, x:x_end]
-                ori_crop = ori_tensor[:, y:y_end, x:x_end]
-                
-                crops.append(crop)
-                ori_crops.append(ori_crop)
-                crop_bboxes.append((top_left, bottom_right))
-    
-    return crops, ori_crops, crop_bboxes
-
-def create_crops_v3(image_tensor, ori_tensor, bbox, padding=100, crop_size=(512, 512), stride=(256, 256)):
-    """
-    Create overlapping crops from the adjusted bounding box tensor.
-
-    Parameters:
-    - image_tensor: The image tensor to crop from.
-    - ori_tensor: The original tensor to crop from.
-    - bbox: A tensor with the format [x_min, y_min, x_max, y_max].
-    - crop_size: Size of the crops (width, height).
-    - stride: Step size for the sliding window (overlap control).
-
-    Returns:
-    - A list of crops, original image crops, and their respective bounding boxes.
-    """
-    crop_width, crop_height = crop_size
-    stride_x, stride_y = stride
-
-    y_min, x_min, y_max, x_max = bbox.tolist()  # Convert tensor to list
-    pad_x_min = max(x_min - padding, 0)
-    pad_y_min = max(y_min - padding, 0)
-    pad_x_max = min(x_max + padding, image_tensor.shape[-1])
-    pad_y_max = min(y_max + padding, image_tensor.shape[-2])
-    crops = []
-    ori_crops = []
-    crop_bboxes = []
-    
-    pad_width = pad_x_max - pad_x_min
-    num_x_crops = pad_width//stride_x + 1
-
-    pad_height = pad_y_max - pad_y_min
-    num_y_crops = pad_height//stride_y + 1
-    # Loop through the adjusted bounding box with overlap using stride
-    for i in range(num_x_crops):
-        for j in range(num_y_crops):
-            x = pad_x_min + stride_x*i
-            x_end = x + crop_width
-
-            y = pad_y_min + stride_y*j
-            y_end = y + crop_height
-
-            if x_end > pad_x_max:
-                x = pad_x_max - crop_width
-                x_end = pad_x_max
-
-            if y_end > pad_y_max:
-                y = pad_y_max - crop_height
-                y_end = pad_y_max
-
-            top_left = (y, x)
-            bottom_right = (y_end, x_end)
-
-            # Crop from the image tensor
-            crop = image_tensor[:, :, y:y_end, x:x_end]
-            ori_crop = ori_tensor[:, y:y_end, x:x_end]
-
-            crops.append(crop)
-            ori_crops.append(ori_crop)
-            crop_bboxes.append((top_left, bottom_right))
-            
-    return crops, ori_crops, crop_bboxes
-
-def to_xyxy(lst):
-    return [((bbox[0][1], bbox[0][0]), (bbox[1][1], bbox[1][0])) for bbox in lst]
+#def create_crops_v3(image_tensor, ori_tensor, bbox, padding=100, crop_size=(512, 512), stride=(256, 256)):
+#    """
+#    Create overlapping crops from the adjusted bounding box tensor.
+#
+#    Parameters:
+#    - image_tensor: The image tensor to crop from.
+#    - ori_tensor: The original tensor to crop from.
+#    - bbox: A tensor with the format [x_min, y_min, x_max, y_max].
+#    - crop_size: Size of the crops (width, height).
+#    - stride: Step size for the sliding window (overlap control).
+#
+#    Returns:
+#    - A list of crops, original image crops, and their respective bounding boxes.
+#    """
+#    crop_width, crop_height = crop_size
+#    stride_x, stride_y = stride
+#
+#    y_min, x_min, y_max, x_max = bbox.tolist()  # Convert tensor to list
+#    pad_x_min = max(x_min - padding, 0)
+#    pad_y_min = max(y_min - padding, 0)
+#    pad_x_max = min(x_max + padding, image_tensor.shape[-1])
+#    pad_y_max = min(y_max + padding, image_tensor.shape[-2])
+#    crops = []
+#    ori_crops = []
+#    crop_bboxes = []
+#    
+#    pad_width = pad_x_max - pad_x_min
+#    num_x_crops = pad_width//stride_x + 1
+#
+#    pad_height = pad_y_max - pad_y_min
+#    num_y_crops = pad_height//stride_y + 1
+#    # Loop through the adjusted bounding box with overlap using stride
+#    for i in range(num_x_crops):
+#        for j in range(num_y_crops):
+#            x = pad_x_min + stride_x*i
+#            x_end = x + crop_width
+#
+#            y = pad_y_min + stride_y*j
+#            y_end = y + crop_height
+#
+#            if x_end > pad_x_max:
+#                x = pad_x_max - crop_width
+#                x_end = pad_x_max
+#
+#            if y_end > pad_y_max:
+#                y = pad_y_max - crop_height
+#                y_end = pad_y_max
+#
+#            top_left = (y, x)
+#            bottom_right = (y_end, x_end)
+#
+#            # Crop from the image tensor
+#            crop = image_tensor[:, :, y:y_end, x:x_end]
+#            ori_crop = ori_tensor[:, y:y_end, x:x_end]
+#
+#            crops.append(crop)
+#            ori_crops.append(ori_crop)
+#            crop_bboxes.append((top_left, bottom_right))
+#            
+#    return crops, ori_crops, crop_bboxes
+#
+#def to_xyxy(lst):
+#    return [((bbox[0][1], bbox[0][0]), (bbox[1][1], bbox[1][0])) for bbox in lst]
 
 def l2_loss_corners(bbox1, bbox2):
     """
@@ -425,13 +351,12 @@ def l2_loss_corners(bbox1, bbox2):
     return top_left_loss, bottom_right_loss
 
 def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
-                    data_loader: Iterable, repvit_model, rep_eval_on_format_results, 
-                    rep_eval_kwargs, optimizer: torch.optim.Optimizer,
+                    data_loader: Iterable, optimizer: torch.optim.Optimizer,
                     device: torch.device, epoch: int, max_norm: float = 0, 
                     wo_class_error=False, lr_scheduler=None, args=None, logger=None):
     scaler = torch.cuda.amp.GradScaler(enabled=args.amp)
 
-    repvit_model = repvit_model.to(device)
+    #repvit_model = repvit_model.to(device)
     
     model.train()
     criterion.train()
@@ -461,32 +386,14 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                 ori_samples = ori_samples.to(device)
                 if ori_samples.shape != (3,1080,1920):
                     continue
-            
-                car_bbox = targets[i]["car_bboxes"]
-                ymin, ymax, xmin, xmax = car_bbox[0]
-                car_bbox_resp = np.array([ymin.item(),xmin.item(), ymax.item(),xmax.item()])
-                car_bbox_resp = torch.from_numpy(car_bbox_resp).int()
-            
-                #torch save the following lines
-                #torch.save(samples.tensors,'pt_files/samples_img.pt')
-                #torch.save(samples.mask,'pt_files/samples_msk.pt')
-                #torch.save(captions,'pt_files/captions.pt')
-                #torch.save(targets,'pt_files/targets.pt')
-                # torch.save(cap_list,'pt_files/cap_list.pt')
                 
-                
-                #Function to create 512x512 crops and stack it as batch (samples)
-                #adjusted_bbox = adjust_bounding_box(car_bbox_resp, ori_samples.shape, (512,512))
-                #crops, ori_crops, crop_bboxes = create_crops_v2(samples, ori_samples, adjusted_bbox, (512,512))
+                car_bbox_resp = targets[i]["car_bboxes"][0].int()
                 crops, ori_crops, crop_bboxes = create_crops_v3(samples, ori_samples, car_bbox_resp)
-                crop_bboxes = to_xyxy(crop_bboxes)
                 
-                #from torchvision.utils import save_image
-                #ori_samples = ori_samples/255.0
-                #save_image(ori_samples, f'debug/ori_sample.png')
                 #for crop_id, ori_crop in enumerate(ori_crops):
                 #    ori_crop = ori_crop / 255.0
                 #    save_image(ori_crop, f'debug/output_image_{crop_id}.png')
+                
                 scaled_dmg_bboxes = []
                 dmg_bboxes = targets[i]['boxes']
                 dmg_labels = targets[i]['labels']
@@ -503,6 +410,11 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                     #    bb[2] = min(bb[2], car_bbox[1][0])
                     #    bb[3] = min(bb[3], car_bbox[1][1])
                     scaled_dmg_bboxes.append(bb)
+
+                #tnsr = torch.Tensor(scaled_dmg_bboxes)
+                #img = draw_bounding_boxes(ori_samples/255., tnsr, width=3, colors = "red")
+                #save_image(img, f'debug/test_img.jpg')
+
                 for crop, ori_crop, crop_bbox in zip(crops, ori_crops, crop_bboxes):
                     tgt = dict()
                     final_unnorm = []
@@ -556,8 +468,6 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                     final_targets.append(crop_targets[i])
                     
                     #Target visualiation
-                    #from torchvision.utils import save_image
-                    #from torchvision.utils import draw_bounding_boxes
                     #scaled_dmg_tnsr = crop_targets[i]['unnorm']
                     #crop_img = draw_bounding_boxes(batch_ori_crops[i], scaled_dmg_tnsr, width=3, colors = "red")
                     #crop_img = crop_img /255.0
@@ -567,7 +477,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
             if len(final_crops) == 0:
                 continue
             
-            max_num_crops = 16
+            max_num_crops = 64
             if len(final_crops) > max_num_crops:
                 idxs = random.sample(range(len(final_crops)), max_num_crops)
                 final_crops = [final_crops[i] for i in idxs]
@@ -591,8 +501,6 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
             weight_dict = criterion.weight_dict
             
             #DEBUG:Visualization code starts
-            #from torchvision.utils import save_image
-            #from torchvision.utils import draw_bounding_boxes
             ## Extracting the image tensor
             ##image_tensors = torch.load('pt_files2/samples_img.pt')
             ##target = torch.load('pt_files2/targets.pt')
@@ -686,9 +594,9 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
 @torch.no_grad()
 def evaluate(model, 
             criterion, 
-            repvit_model, 
-            rep_eval_on_format_results, 
-            rep_eval_kwargs, 
+            #repvit_model, 
+            #rep_eval_on_format_results, 
+            #rep_eval_kwargs, 
             postprocessors, 
             data_loader, 
             base_ds, 
@@ -740,116 +648,114 @@ def evaluate(model,
     caption = " . ".join(cat_list) + ' .'
     print("Input text prompt:", caption)
     
-    for samples, ori_samples, targets, abs_path in metric_logger.log_every(data_loader, 10, header, logger=logger):
-        samples = samples.to(device)
-        abs_path = abs_path[0]
-        ori_samples = ori_samples[0].to(device)
-        ori_samples = ori_samples.to(device)
-        if ori_samples.shape != (3,1080,1920):
-            continue
-        
-        img1 = ori_samples.permute(1,2,0)
-        img1 = img1.cpu().float().numpy()
-        results = main(data_loader, img1, repvit_model, rep_eval_on_format_results, rep_eval_kwargs)
-        mask_tensor = torch.tensor(results[0], dtype=torch.bool).to("cuda")
-        xmin, xmax, ymin, ymax = get_tight_bbox(mask_tensor)
-        
-        car_bbox_resp = np.array([ymin.item(),xmin.item(), ymax.item(),xmax.item()])
-        car_bbox_resp = torch.from_numpy(car_bbox_resp).int()
-
-        targets = [{k: to_device(v, device) for k, v in t.items()} for t in targets]
-        
-        #NOTE: Change required here if num categories change
-        id_map = {1: 0, 2: 1, 3: 2, 4:3, 5:4, 6:5}
-
-        mapped_tensor = torch.tensor([id_map[int(i)] for i in targets[0]["labels"]])
-        targets[0]["labels"] = mapped_tensor
-
-        bs = samples.tensors.shape[0]
+    for samples_tnsr, ori_samples_tnsr, targets, abs_path in metric_logger.log_every(data_loader, 10, header, logger=logger):
+        bs = len(targets)
+        print(bs)
         input_captions = [caption] * bs
+        targets = [{k: to_device(v, device) for k, v in t.items()} for t in targets]
         with torch.cuda.amp.autocast(enabled=args.amp):
-            #Function to create 512x512 crops and stack it as batch (samples)
-            #adjusted_bbox = adjust_bounding_box(car_bbox_resp, ori_samples.shape, (512,512))
-            #crops, ori_crops, crop_bboxes = create_crops_v2(samples.tensors, ori_samples, adjusted_bbox, (512,512))
-            crops, ori_crops, crop_bboxes = create_crops_v3(samples.tensors, ori_samples, car_bbox_resp)
-            crop_bboxes = to_xyxy(crop_bboxes)
-            #for i, ori_crop in enumerate(ori_crops):
-            #    from torchvision.utils import save_image
-            #    ori_crop = ori_crop / 255.0
-            #    save_image(ori_crop, f'debug/output_image_{i}.png')
-            scaled_dmg_bboxes = []
-            dmg_bboxes = targets[0]['boxes']
-            dmg_labels = targets[0]['labels']
-            img_size = targets[0]['size']
-            for box in dmg_bboxes:
-                bb = xywh_to_xyxy(box, img_size[0], img_size[1])
-                #Adjust the damage bbox such that the top left and bottom right does not exceed the vehicle bbox
-                car_bbox = ((car_bbox_resp[0].item(),car_bbox_resp[1].item()), (car_bbox_resp[2].item(), car_bbox_resp[3].item()))
-                #car_bbox = ((adjusted_bbox[0].item(),adjusted_bbox[1].item()), (adjusted_bbox[2].item(), adjusted_bbox[3].item()))
-                #if not is_inside(bb, car_bbox):
-                #    bb[0] = max(bb[0], car_bbox[0][0])
-                #    bb[1] = max(bb[1], car_bbox[0][1])
-                #    bb[2] = min(bb[2], car_bbox[1][0])
-                #    bb[3] = min(bb[3], car_bbox[1][1])
-                scaled_dmg_bboxes.append(bb)
-            
+            batch_crops = []
+            batch_ori_crops = []
             crop_targets = []
-            for crop, crop_bbox in zip(crops, crop_bboxes):
-                tgt = dict()
-                final_unnorm = []
-                final_dmg_bboxes = []
-                labels = []
-                tgt["size"] = torch.Tensor([crop.shape[2], crop.shape[3]]).int().to(device)
-                tgt["orig_size"] = torch.Tensor([crop.shape[2], crop.shape[3]]).int().to(device)
-                tgt["image_id"] = torch.Tensor([0]).int().to(device)
-                for i, dmg_bbox in enumerate(scaled_dmg_bboxes):
-                    if is_inside(dmg_bbox, crop_bbox):
-                        
-                        relative_dmg_bbox = translate_bounding_box(dmg_bbox, crop_bbox)
-                        relative_dmg_bbox = torch.Tensor(relative_dmg_bbox)
-                        final_unnorm.append(relative_dmg_bbox)
-                        new_bbox = normalize_bbox(relative_dmg_bbox, tgt["size"])
-                        
-                        if min(new_bbox) < 0:
-                            continue
-                        final_dmg_bboxes.append(new_bbox)
+            
+            for i in range(len(targets)):
+                samples = samples_tnsr.tensors[i].unsqueeze(dim=0)
+                samples = samples.to(device)
 
-                        lbl = dmg_labels[i].item()
-                        labels.append(lbl) #TODO: Update labels
-                        #print('Dmg crop')
-                        #print(crop_bbox)
-                        #print(dmg_bbox)
-                        #print(relative_dmg_bbox)
-                        #print(new_bbox)
-                        #print('=========')
+                ori_samples = ori_samples_tnsr[i].to(device)
+                ori_samples = ori_samples.to(device)
+                if ori_samples.shape != (3,1080,1920):
+                    continue
+
+                #NOTE: Change required here if num categories change
+                id_map = {1: 0, 2: 1, 3: 2, 4:3, 5:4, 6:5}
+
+                mapped_tensor = torch.tensor([id_map[int(i)] for i in targets[i]["labels"]])
+                targets[i]["labels"] = mapped_tensor
+                
+                car_bbox_resp = targets[i]["car_bboxes"][0].int()
+                crops, ori_crops, crop_bboxes = create_crops_v3(samples, ori_samples, car_bbox_resp)
+                
+                #for i, ori_crop in enumerate(ori_crops):
+                #    ori_crop = ori_crop / 255.0
+                #    save_image(ori_crop, f'debug/output_image_{i}.png')
+                scaled_dmg_bboxes = []
+                dmg_bboxes = targets[0]['boxes']
+                dmg_labels = targets[0]['labels']
+                img_size = targets[0]['size']
+                for box in dmg_bboxes:
+                    bb = xywh_to_xyxy(box, img_size[0], img_size[1])
+                    #Adjust the damage bbox such that the top left and bottom right does not exceed the vehicle bbox
+                    car_bbox = ((car_bbox_resp[0].item(),car_bbox_resp[1].item()), (car_bbox_resp[2].item(), car_bbox_resp[3].item()))
+                    #car_bbox = ((adjusted_bbox[0].item(),adjusted_bbox[1].item()), (adjusted_bbox[2].item(), adjusted_bbox[3].item()))
+                    #if not is_inside(bb, car_bbox):
+                    #    bb[0] = max(bb[0], car_bbox[0][0])
+                    #    bb[1] = max(bb[1], car_bbox[0][1])
+                    #    bb[2] = min(bb[2], car_bbox[1][0])
+                    #    bb[3] = min(bb[3], car_bbox[1][1])
+                    scaled_dmg_bboxes.append(bb)
+            
+                crop_targets = []
+                for crop, ori_crop, crop_bbox in zip(crops, ori_crops, crop_bboxes):
+                    tgt = dict()
+                    final_unnorm = []
+                    final_dmg_bboxes = []
+                    labels = []
+                    tgt["size"] = torch.Tensor([crop.shape[2], crop.shape[3]]).int().to(device)
+                    tgt["orig_size"] = torch.Tensor([crop.shape[2], crop.shape[3]]).int().to(device)
+                    tgt["image_id"] = torch.Tensor([0]).int().to(device)
+                    for i, dmg_bbox in enumerate(scaled_dmg_bboxes):
+                        if is_inside(dmg_bbox, crop_bbox):
+                            
+                            relative_dmg_bbox = translate_bounding_box(dmg_bbox, crop_bbox)
+                            relative_dmg_bbox = torch.Tensor(relative_dmg_bbox)
+                            final_unnorm.append(relative_dmg_bbox)
+                            new_bbox = normalize_bbox(relative_dmg_bbox, tgt["size"])
+                            
+                            if min(new_bbox) < 0:
+                                continue
+                            final_dmg_bboxes.append(new_bbox)
+
+                            lbl = dmg_labels[i].item()
+                            labels.append(lbl) #TODO: Update labels
+                            #print('Dmg crop')
+                            #print(crop_bbox)
+                            #print(dmg_bbox)
+                            #print(relative_dmg_bbox)
+                            #print(new_bbox)
+                            #print('=========')
+                        else:
+                            pass
+                            #print('=========')
+                            #print('No dmg crop')
+                            #print('=========')
+
+
+                    if len(final_dmg_bboxes) > 0:
+                        tgt["boxes"] = torch.stack(final_dmg_bboxes).to(device)
+                        tgt["unnorm"] = torch.stack(final_unnorm).to(device)
                     else:
-                        pass
-                        #print('=========')
-                        #print('No dmg crop')
-                        #print('=========')
-
-
-                if len(final_dmg_bboxes) > 0:
-                    tgt["boxes"] = torch.stack(final_dmg_bboxes).to(device)
-                    tgt["unnorm"] = torch.stack(final_unnorm).to(device)
-                else:
-                    tgt["boxes"] = torch.Tensor([]).to(device) #TODO: Check if no dmg values are set to empty array
-                tgt["labels"] = torch.Tensor(labels).int().to(device)
-                crop_targets.append(tgt)
+                        tgt["boxes"] = torch.Tensor([]).to(device) #TODO: Check if no dmg values are set to empty array
+                    tgt["labels"] = torch.Tensor(labels).int().to(device)
+                    crop_targets.append(tgt)
+                    batch_crops.append(crop)
+                    batch_ori_crops.append(ori_crop)
+            
             #Skip crops with no damages
             final_crops = []
             final_ori_crops = []
             final_targets = []
-            for i in range(len(crops)):
+            for i in range(len(batch_crops)):
                 if len(crop_targets[i]['boxes']) != 0:
-                    final_crops.append(crops[i])
-                    final_ori_crops.append(ori_crops[i])
+                    final_crops.append(batch_crops[i])
+                    final_ori_crops.append(batch_ori_crops[i])
                     final_targets.append(crop_targets[i])
             
             #NOTE:Skip if no bounding boxes are usable
             if len(final_crops) == 0:
                 continue
             
+            print(len(final_crops))
             crops = torch.cat(final_crops, dim=0)
             crop_captions = [caption] * len(final_crops)
             crop_cap_list = [cat_list] * len(final_crops)
@@ -915,8 +821,6 @@ def evaluate(model,
 #            
 #                    crop_vis = final_ori_crops[i]
 #                    rand = torch.randint(1,1000,(1,1))[0][0].item()
-#                    from torchvision.utils import save_image
-#                    from torchvision.utils import draw_bounding_boxes
 #                    #dmg_tnsr = torch.cat([scale_pred, scale_gt])
 #                    img_vis = draw_bounding_boxes(crop_vis, scale_gt[0], colors="red", width=3)
 #                    img_vis = draw_bounding_boxes(img_vis, scale_pred[0], colors="green", width=3)
