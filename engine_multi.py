@@ -388,6 +388,8 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                     continue
                 
                 car_bbox_resp = targets[i]["car_bboxes"][0].int()
+                xmin, xmax, ymin, ymax = car_bbox_resp
+                car_bbox_resp = np.array([ymin.item(),xmin.item(), ymax.item(),xmax.item()])
                 crops, ori_crops, crop_bboxes = create_crops_v3(samples, ori_samples, car_bbox_resp)
                 
                 #for crop_id, ori_crop in enumerate(ori_crops):
@@ -674,6 +676,8 @@ def evaluate(model,
                 targets[i]["labels"] = mapped_tensor
                 
                 car_bbox_resp = targets[i]["car_bboxes"][0].int()
+                xmin, xmax, ymin, ymax = car_bbox_resp
+                car_bbox_resp = np.array([ymin.item(),xmin.item(), ymax.item(),xmax.item()])
                 crops, ori_crops, crop_bboxes = create_crops_v3(samples, ori_samples, car_bbox_resp)
                 
                 #for i, ori_crop in enumerate(ori_crops):

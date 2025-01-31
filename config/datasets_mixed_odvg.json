@@ -2,8 +2,8 @@
   "train": [
     {
       "root": "/home/ubuntu/roisul",
-      "anno": "/home/ubuntu/roisul/gsd_input_params/train_annot_odvg.jsonl",
-      "label_map": "/home/ubuntu/roisul/gsd_input_params/label.json",
+      "anno": "/home/ubuntu/roisul/input_params/train_annot_odvg.jsonl",
+      "label_map": "/home/ubuntu/roisul/input_params/label.json",
       "dataset_mode": "odvg"
     }
   ],
