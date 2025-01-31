@@ -10,5 +10,5 @@ python test_inference_new.py \
     --config_file ${CFG} \
     --datasets ${DATASETS} \
     --output_dir ${OUTPUT_DIR} \
-    --pretrain_model_path /home/ubuntu/roisul/training_amz_250k_2412/checkpoint0027.pth \
+    --pretrain_model_path /home/ubuntu/roisul/training_amz_250k_3001_mmcvfix/checkpoint.pth \
     --options text_encoder_type="/home/ubuntu/roisul/bert"

@@ -13,7 +13,7 @@ import os, sys
 import numpy as np
 import torch
 from torch.utils.data import DataLoader, DistributedSampler
-from crop_utils import create_crops_v3, to_xyxy
+from crop_utils import create_crops_v3
 from util.get_param_dicts import get_param_dict
 from util.logger import setup_logger
 from util.slconfig import DictAction, SLConfig
@@ -499,15 +499,15 @@ def evaluate(model,
     all_gt_lbls = []
     all_pred_lbls = []
     
-    for batch_idx, (images, car_bboxes) in enumerate(tqdm(data_loader, desc="Processing batches")):
+    for batch_idx, (images, ori_images, car_bboxes) in enumerate(tqdm(data_loader, desc="Processing batches")):
     #for i, row in tqdm(data.iterrows(), total=data.shape[0]):
         start = time.time()
         images = images.to(device)
-#        ori_samples = ori_img.to(device)
-#        ori_samples = ori_samples.to(device)
-#        if ori_samples.shape != (3,1080,1920):
-#            print('res not supported, skipping')
-#            continue
+        ori_images = ori_images.to(device)
+        
+        #if ori_images.shape != (3,1080,1920):
+        #    print('res not supported, skipping')
+        #    continue
 
         bs = images.shape[0]
         input_captions = [caption] * bs
@@ -518,10 +518,10 @@ def evaluate(model,
             a = time.time()
             print('Convert  img to device', a-start)
             for i, sample in enumerate(images):
-                sample = sample
+                sample = sample.unsqueeze(dim=0)
+                ori_sample = ori_images[i]
                 car_bbox_resp = car_bboxes[i]
-                crops, crop_bboxes = create_crops_v3(sample, car_bbox_resp)
-                crop_bboxes = to_xyxy(crop_bboxes)
+                crops, ori_crops, crop_bboxes = create_crops_v3(sample, ori_sample, car_bbox_resp)
                 crop_lst.append(crops)
                 img_ids.append([i]*len(crops))
             b = time.time()

@@ -20,6 +20,7 @@ from util.logger import setup_logger
 from util.slconfig import DictAction, SLConfig
 from util.utils import  BestMetricHolder, to_device
 import util.misc as utils
+from torchvision.utils import save_image, draw_bounding_boxes
 
 from crop_utils import create_crops_v3
 import datasets
@@ -29,12 +30,12 @@ from groundingdino.util.utils import clean_state_dict, get_phrases_from_posmap
 import warnings
 warnings.filterwarnings("ignore")
 
-import mmcv
-from mmcv.runner import (get_dist_info, init_dist, load_checkpoint,
-                         wrap_fp16_model)
+#import mmcv
+#from mmcv.runner import (get_dist_info, init_dist, load_checkpoint,
+#                         wrap_fp16_model)
 import os.path as osp
-from mmseg.models import build_segmentor
-from mmseg.datasets import build_dataset as rep_build_dataset
+#from mmseg.models import build_segmentor
+#from mmseg.datasets import build_dataset as rep_build_dataset
 
 from datasets.cocogrounding_eval import CocoGroundingEvaluator
 #Repvit imports
@@ -58,18 +59,17 @@ import os.path as osp
 import shutil
 import time
 import warnings
-import time
 
-from mmcv.parallel import MMDataParallel, MMDistributedDataParallel
-from mmcv.utils import DictAction
+#from mmcv.parallel import MMDataParallel, MMDistributedDataParallel
+#from mmcv.utils import DictAction
 
-from mmseg.apis import multi_gpu_test, single_gpu_test
+#from mmseg.apis import multi_gpu_test, single_gpu_test
 from PIL import Image
 
-import sys
-sys.path.append('/home/ubuntu/roisul/RepViT/segmentation')
-import repvit
-from align_resize import AlignResize
+#import sys
+#sys.path.append('/home/ubuntu/roisul/RepViT/segmentation')
+#import repvit
+#from align_resize import AlignResize
 import numpy as np
 
 #Debug visualization imports
@@ -855,11 +855,11 @@ def img_preprocessing(img):
 @torch.no_grad()
 def evaluate(model, 
             criterion, 
-            repvit_model, 
+            #repvit_model, 
             ckpt_name,
             exp_name,
-            rep_eval_on_format_results, 
-            rep_eval_kwargs, 
+            #rep_eval_on_format_results, 
+            #rep_eval_kwargs, 
             postprocessors, 
             data_loader, 
             device, 
@@ -909,6 +909,9 @@ def evaluate(model,
     
     data_pth = f"/home/ubuntu/roisul/241129.parquet"
     data = pd.read_parquet(data_pth)
+    #data =data.dropna(subset="PhotoCode_7")
+    #data = data[data["PhotoCode_7"].str.contains('7-9d0ac81a-ac04-452b-aacf-2981e9c95d49-1920x1080')]
+    
     data = data.sample(100000, random_state=42)
     data = data[data['SessID'].str.startswith('AM')]
     #r8tr_sess, undmg_sess, fail_sess = select_sessions(data)
@@ -944,247 +947,258 @@ def evaluate(model,
         print(row['SessID'])
         pc_lst = [4,5,7,8]
         for pc in pc_lst:
+            #try:
+            col_name = f'PhotoCode_{pc}'
+            key = row[col_name]
+            #if key in complete_lst:
+            #    print('Already in complete csv')
+            #    continue
+
+            file_name = key.split('/')[-1]
+            print(key, pc)
+            ori_img = get_img("cdn", key, pc)
+            ori_img = torch.from_numpy(ori_img)
+            ori_img = ori_img.permute(2, 0, 1)
+            width, height = ori_img.shape[-1], ori_img.shape[-2]
+            img = img_preprocessing(ori_img)
+            #mean = [0.485, 0.456, 0.406]
+            #std = [0.229, 0.224, 0.225]
+            #img = F.normalize(ori_img.float(), mean=mean, std=std)
+            img = img.unsqueeze(dim=0)
+            
+            photo_lst = row['photo_lst']
             try:
-                col_name = f'PhotoCode_{pc}'
-                key = row[col_name]
-                if key in complete_lst:
-                    print('Already in complete csv')
-                    continue
-
-                file_name = key.split('/')[-1]
-                ori_img = get_img("cdn", key, pc)
-                ori_img = torch.from_numpy(ori_img)
-                ori_img = ori_img.permute(2, 0, 1)
-                width, height = ori_img.shape[-1], ori_img.shape[-2]
-                img = img_preprocessing(ori_img)
-                #mean = [0.485, 0.456, 0.406]
-                #std = [0.229, 0.224, 0.225]
-                #img = F.normalize(ori_img.float(), mean=mean, std=std)
-                img = img.unsqueeze(dim=0)
-                
-                photo_lst = row['photo_lst']
-                try:
+                damage_name_lst = eval(row["dmg_name_lst"])
+                if type(damage_name_lst) == str:
                     damage_name_lst = eval(row["dmg_name_lst"])
-                    if type(damage_name_lst) == str:
-                        damage_name_lst = eval(row["dmg_name_lst"])
-                except:
+            except:
+                damage_name_lst = eval(row["damage_name_lst"])
+                if type(damage_name_lst) == str:
                     damage_name_lst = eval(row["damage_name_lst"])
-                    if type(damage_name_lst) == str:
-                        damage_name_lst = eval(row["damage_name_lst"])
-                kp_lst  = row['kp_lst']
-                component_lst = row['component_lst']
+            kp_lst  = row['kp_lst']
+            component_lst = row['component_lst']
 
-                codes = [int(x['code']) for x in photo_lst]
-                freq = Counter(codes)
-                idxs = [i for i in range(len(photo_lst)) if int(photo_lst[i]['code']) == pc]
-                dmg_kpts = [kp_lst[i] for i in idxs]
-                damage_name_lst = [damage_name_lst[i] for i in idxs]
-                component_lst = [component_lst[i] for i in idxs]
+            codes = [int(x['code']) for x in photo_lst]
+            freq = Counter(codes)
+            idxs = [i for i in range(len(photo_lst)) if int(photo_lst[i]['code']) == pc]
+            dmg_kpts = [kp_lst[i] for i in idxs]
+            damage_name_lst = [damage_name_lst[i] for i in idxs]
+            component_lst = [component_lst[i] for i in idxs]
 
-                scaled_gt_bbox_lst = []
-                gt_lbl_lst = []
-                gt_lbl_name_lst = []
-                for j, cat in enumerate(damage_name_lst):
-                    #Text categories
-                    if 'DENT' in cat:
-                        lbl_cat = 'dent'
-                    elif 'SCRATCH' in cat:
-                        lbl_cat = 'scratch'
-                    elif 'MISSING' in cat:
-                        lbl_cat = 'missing'
-                    elif 'SCRAPED' in cat:
-                        lbl_cat = 'scraped'
-                    elif 'BROKEN' in cat:
-                        lbl_cat = 'broken'
-                    else:
-                        lbl_cat = 'others'
+            scaled_gt_bbox_lst = []
+            gt_lbl_lst = []
+            gt_lbl_name_lst = []
+            for j, cat in enumerate(damage_name_lst):
+                #Text categories
+                if 'DENT' in cat:
+                    lbl_cat = 'dent'
+                elif 'SCRATCH' in cat:
+                    lbl_cat = 'scratch'
+                elif 'MISSING' in cat:
+                    lbl_cat = 'missing'
+                elif 'SCRAPED' in cat:
+                    lbl_cat = 'scraped'
+                elif 'BROKEN' in cat:
+                    lbl_cat = 'broken'
+                else:
+                    lbl_cat = 'others'
 
-                    #Bbox size categories
-                    if 'MAJOR' in cat:
-                        size_cat = 'large'
-                    elif 'MEDIUM' in cat:
-                        size_cat = 'medium'
-                    elif 'MINOR' in cat:
-                        size_cat = 'small'
-                    else:
-                        size_cat = 'small'
-                  
-                    category_id = cat_id_dct[lbl_cat]
-                    kpts = dmg_kpts[j]
-                    bbox = get_coco_bbox(kpts, height, width, size_cat) 
-                    scaled_gt_bbox_lst.append(bbox)
-                    gt_lbl_lst.append(category_id)
-                    gt_lbl_name_lst.append(lbl_cat)
-                
-                samples = img.to(device)
-                ori_samples = ori_img.to(device)
-                ori_samples = ori_samples.to(device)
-                if ori_samples.shape != (3,1080,1920):
-                    print('res not supported, skipping')
-                    continue
-                
-                #img1 = ori_samples.permute(1,2,0)
-                #img1 = img1.cpu().float().numpy()
-                #results = repvit_main(data_loader, img1, repvit_model, rep_eval_on_format_results, rep_eval_kwargs)
-                #mask_tensor = torch.tensor(results[0], dtype=torch.bool).to("cuda")
-                #xmin, xmax, ymin, ymax = get_tight_bbox(mask_tensor)
-                
-                #car_bbox_resp = np.array([ymin.item(),xmin.item(), ymax.item(),xmax.item()])
-                #car_bbox_resp = torch.from_numpy(car_bbox_resp).int()
-                
-                try:
-                    car_bbox_resp = get_seg("cdn", key, pc)
-                except:
-                    print('segmentation failed')
-                    continue
-                car_bbox_resp = torch.from_numpy(car_bbox_resp).int()
-                bs = samples.shape[0]
-                input_captions = [caption] * bs
-                with torch.cuda.amp.autocast(enabled=args.amp):
-                    #Function to create 512x512 crops and stack it as batch (samples)
-                    crops, ori_crops, crop_bboxes = create_crops_v3(samples, ori_samples, car_bbox_resp)
-                    crops = torch.cat(crops, dim=0)
-                    crop_captions = [caption] * len(crops)
-                    crop_cap_list = [cat_list] * len(crops)
-                    
-                    outputs = model(crops, captions=crop_captions)
-                    #Eval crop visualization
-                    box_threshold = 0.18
-                    nms_iou_threshold = 0.2
-                    scaled_pred_bbox_lst = []
-                    pred_lbl_lst = []
-                    pred_conf_lst = []
-                    for i in range(len(outputs["pred_logits"])):
-                        logits = outputs["pred_logits"].sigmoid()[i]  # (nq, 256)
-                        boxes = outputs["pred_boxes"][i]  # (nq, 4)
-                        # filter output
-                        logits_filt = logits.cpu().clone()
-                        boxes_filt = boxes.cpu().clone()
-                        filt_mask = logits_filt.max(dim=1)[0] > box_threshold
-                        logits_filt = logits_filt[filt_mask]  # num_filt, 256
-                        boxes_filt = boxes_filt[filt_mask]  # num_filt, 4
-                        #print(boxes_filt)
-                        if len(boxes_filt) != 0:
-                            # get phrase
-                            tokenlizer = model.tokenizer
-                            tokenized = tokenlizer(caption)
-                            # build pred
-                            with_logits = True
-                            text_threshold = 0.25
-                            pred_phrases = []
-                            for logit, box in zip(logits_filt, boxes_filt):
-                                pred_phrase = get_phrases_from_posmap(logit > text_threshold, tokenized, tokenlizer)
-                                if with_logits:
-                                    pred_phrases.append(pred_phrase + f"({str(logit.max().item())[:4]})")
-                                    pred_lbl_lst.append(pred_phrase)
-                                    pred_conf_lst.append(logit.max().item())
-                                    
-                                    scale_pred = xywh_to_xyxy(box, 512, 512)
-                                    crop_bbox = crop_bboxes[i]
-                                    scaled_pred_bbox = translate_bbox_to_original_image(scale_pred, crop_bbox[0])
-                                    scaled_pred_bbox_lst.append(scaled_pred_bbox)
-                                else:
-                                    pred_phrases.append(pred_phrase)
-                        
-                        #Qualitative vis
-                        if len(boxes_filt) != 0:
-                            pred_bb_lst = []
-                            for pred_bbox in boxes_filt:
-                                pred = xywh_to_xyxy(pred_bbox, 512, 512)
-                                pred = torch.Tensor(pred)
-                                pred_bb_lst.append(pred)
-                            scale_pred = torch.stack(pred_bb_lst)
-                            #scale_pred = torch.tensor(scale_pred).unsqueeze(dim=0)
-                    #        #scale_gt = torch.tensor(scale_gt).unsqueeze(dim=0)
-                    #        #print(scale_pred)
-                    #        #print(scale_gt)
-                            
-                            crop_vis = ori_crops[i]
-                            rand = torch.randint(1,1000,(1,1))[0][0].item()
-                            from torchvision.utils import save_image
-                            from torchvision.utils import draw_bounding_boxes
-                            #dmg_tnsr = torch.cat([scale_pred, scale_gt])
-                    #        img_vis = draw_bounding_boxes(crop_vis, scale_gt, colors="red", width=3)
-                            img_vis = draw_bounding_boxes(crop_vis, scale_pred,labels=pred_phrases, colors="green", width=3)
-                            img_vis = img_vis/255.
-                            #save_image(img_vis, f'test_vis_crops/img_{row["file_name"]}_{rand}.png')
-                    
-                    
-                    if not isinstance(scaled_pred_bbox_lst, torch.Tensor):
-                        pred = torch.Tensor(scaled_pred_bbox_lst)
-
-                        if pred.dim() == 1:
-                            pred = pred.unsqueeze(0)
-
-                    if not isinstance(pred_lbl_lst, np.ndarray):
-                        label = np.array(pred_lbl_lst)
-
-                    if not isinstance(pred_conf_lst, torch.Tensor):
-                        conf = torch.Tensor(pred_conf_lst)
-                    if len(pred[0]) != 0:
-                        idx = ops.nms(boxes=pred, scores=conf, iou_threshold=nms_iou_threshold)
-                        pred = pred[idx]
-                        conf = conf[idx]
-                        label = label[idx]
-
-    #                if len(scaled_gt_bbox_lst) != 0:
-    #                    scaled_gt_bbox_tnr = torch.Tensor(scaled_gt_bbox_lst)
-    #                else:
-    #                    scaled_gt_bbox_tnr = torch.Tensor([])
-    #                if (len(pred) != 0 and len(scaled_gt_bbox_tnr) != 0):
-    #                    img_vis1 = draw_bounding_boxes(ori_img, pred, labels=label, colors="green", width=3)
-    #                    img_vis2 = draw_bounding_boxes(ori_img, scaled_gt_bbox_tnr.int(), colors="blue", width=3)
-    #                    img_vis = img_vis1 * 0.5 + img_vis2 * 0.5
-    #                    img_vis = img_vis/255.
-    #                    save_image(img_vis, f'debug_{exp_name}/{file_name}')
-                    
-                    #unique_bboxes, unique_lbls, unique_confs = remove_overlapping_bboxes(scaled_pred_bbox_lst, pred_lbl_lst, pred_conf_lst, iou_threshold=0.80)
-                    #NOTE: Change required here if num categories change
-                    #id_map = {'dent':0, 'scratch':1, 'missing':2, 'scraped':3, 'broken':4, 'others':5}
-
-                    #unique_maps = [id_map[lbl] if lbl in id_map else 5 for lbl in unique_lbls]
-                    
-                    #data_per_predbox, data_per_gtbox = evaluate_detections(unique_bboxes, scaled_gt_bbox_lst, iou_threshold=0.5, distance_threshold=400)
-                    #metrics = evaluate_detections(scaled_pred_bbox_lst, scaled_gt_bbox_lst, iou_threshold=0.5, distance_threshold=200)
-                    #print(row["file_name"])
-                    #print(scaled_gt_bbox_lst)
-                    #print(scaled_pred_bbox_lst)
-                    
-                    all_names_lst.append(file_name)
-                    all_car_bbox.append(car_bbox_resp.tolist())
-                    all_gts.append(scaled_gt_bbox_lst)
-                    all_preds.append(pred.tolist())
-                    all_pred_lbls.append(label.tolist())
-                    all_pred_confs.append(conf.tolist())
-                    #all_metrics_per_pred.append(data_per_predbox)
-                    #all_metrics_per_gt.append(data_per_gtbox)
-                    all_gt_lbls.append(gt_lbl_name_lst)
-                    
-                    #precision, recall, ap, mean_ap = get_metrics(final_preds, final_gts, iou_threshold=0.2, num_classes=6)
-                    #print(precision, recall, ap, mean_ap)
-                    opt = {}
-                    opt['cdn_url'] = key
-                    opt['fname'] = file_name
-                    opt['car_bbox'] = car_bbox_resp.tolist()
-                    opt['damage_name_lst'] = damage_name_lst
-                    opt['component_lst'] = component_lst
-                    opt['gt_bboxes'] = scaled_gt_bbox_lst
-                    opt['pred_bboxes'] = pred.tolist()
-                    opt['pred_labels'] = label.tolist()
-                    opt['pred_confs'] = conf.tolist()
-                    accumulated_dicts.append(opt)
-
-                    #if (idx + 1) % interval == 0:
-                    result = pd.DataFrame(accumulated_dicts)
-                    if not os.path.exists(f"test_results/"):
-                        os.makedirs(f"test_results/")
-                    path = f"test_results/{exp_name}_{ckpt_name}_amzcontd.csv"
-                    result.to_csv(path, mode='a', header=not pd.io.common.file_exists(path), index=False)
-                    accumulated_dicts.clear() 
-            except Exception as e:
-                print(e)
-                print('Hit error skipping')
+                #Bbox size categories
+                if 'MAJOR' in cat:
+                    size_cat = 'large'
+                elif 'MEDIUM' in cat:
+                    size_cat = 'medium'
+                elif 'MINOR' in cat:
+                    size_cat = 'small'
+                else:
+                    size_cat = 'small'
+              
+                category_id = cat_id_dct[lbl_cat]
+                kpts = dmg_kpts[j]
+                bbox = get_coco_bbox(kpts, height, width, size_cat) 
+                scaled_gt_bbox_lst.append(bbox)
+                gt_lbl_lst.append(category_id)
+                gt_lbl_name_lst.append(lbl_cat)
+            
+            samples = img.to(device)
+            ori_samples = ori_img.to(device)
+            ori_samples = ori_samples.to(device)
+            if ori_samples.shape != (3,1080,1920):
+                print('res not supported, skipping')
                 continue
+            
+            #img1 = ori_samples.permute(1,2,0)
+            #img1 = img1.cpu().float().numpy()
+            #results = repvit_main(data_loader, img1, repvit_model, rep_eval_on_format_results, rep_eval_kwargs)
+            #mask_tensor = torch.tensor(results[0], dtype=torch.bool).to("cuda")
+            #xmin, xmax, ymin, ymax = get_tight_bbox(mask_tensor)
+            
+            #car_bbox_resp = np.array([ymin.item(),xmin.item(), ymax.item(),xmax.item()])
+            #car_bbox_resp = torch.from_numpy(car_bbox_resp).int()
+            #try:
+            #    car_bbox_resp = get_seg("cdn", key, pc)
+            #except:
+            #    print('segmentation failed')
+            #    continue
+            #car_bbox_resp = torch.from_numpy(car_bbox_resp).int()
+            
+            try:
+                car_bbox_resp = json.loads(complete_csv[complete_csv['cdn_url']==key]['car_bbox'].iloc[0])
+            except:
+                continue
+            car_bbox_resp = torch.Tensor(car_bbox_resp).int()
+            bs = samples.shape[0]
+            input_captions = [caption] * bs
+            with torch.cuda.amp.autocast(enabled=args.amp):
+                #Function to create 512x512 crops and stack it as batch (samples)
+                crops, ori_crops, crop_bboxes = create_crops_v3(samples, ori_samples, car_bbox_resp)
+                crops = torch.cat(crops, dim=0)
+                crop_captions = [caption] * len(crops)
+                crop_cap_list = [cat_list] * len(crops)
+                
+                a = time.time()
+                outputs = model(crops, captions=crop_captions)
+                b = time.time()
+                print('Time', b-a, 'Crops len', len(crops))
+                #Eval crop visualization
+                box_threshold = 0.30
+                nms_iou_threshold = 0.2
+                scaled_pred_bbox_lst = []
+                pred_lbl_lst = []
+                pred_conf_lst = []
+                
+                print(f"Length of pred_logits: {len(outputs['pred_logits'])}")
+                len_post_filt = 0
+                for i in range(len(outputs["pred_logits"])):
+                    logits = outputs["pred_logits"].sigmoid()[i]  # (nq, 256)
+                    boxes = outputs["pred_boxes"][i]  # (nq, 4)
+                    # filter output
+                    logits_filt = logits.cpu().clone()
+                    boxes_filt = boxes.cpu().clone()
+                    filt_mask = logits_filt.max(dim=1)[0] > box_threshold
+                    logits_filt = logits_filt[filt_mask]  # num_filt, 256
+                    boxes_filt = boxes_filt[filt_mask]  # num_filt, 4
+                    #print(boxes_filt)
+                    if len(boxes_filt) != 0:
+                        # get phrase
+                        tokenlizer = model.tokenizer
+                        tokenized = tokenlizer(caption)
+                        # build pred
+                        with_logits = True
+                        text_threshold = 0.25
+                        pred_phrases = []
+                        for logit, box in zip(logits_filt, boxes_filt):
+                            pred_phrase = get_phrases_from_posmap(logit > text_threshold, tokenized, tokenlizer)
+                            if with_logits:
+                                pred_phrases.append(pred_phrase + f"({str(logit.max().item())[:4]})")
+                                pred_lbl_lst.append(pred_phrase)
+                                pred_conf_lst.append(logit.max().item())
+                                
+                                scale_pred = xywh_to_xyxy(box, 512, 512)
+                                crop_bbox = crop_bboxes[i]
+                                scaled_pred_bbox = translate_bbox_to_original_image(scale_pred, crop_bbox[0])
+                                scaled_pred_bbox_lst.append(scaled_pred_bbox)
+                            else:
+                                pred_phrases.append(pred_phrase)
+                    len_post_filt += len(logits_filt) 
+                    #Qualitative vis
+                    if len(boxes_filt) != 0:
+                        pred_bb_lst = []
+                        for pred_bbox in boxes_filt:
+                            pred = xywh_to_xyxy(pred_bbox, 512, 512)
+                            pred = torch.Tensor(pred)
+                            pred_bb_lst.append(pred)
+                        scale_pred = torch.stack(pred_bb_lst)
+                        #scale_pred = torch.tensor(scale_pred).unsqueeze(dim=0)
+                #        #scale_gt = torch.tensor(scale_gt).unsqueeze(dim=0)
+                #        #print(scale_pred)
+                #        #print(scale_gt)
+                        
+                        crop_vis = ori_crops[i]
+                        rand = torch.randint(1,1000,(1,1))[0][0].item()
+                        #dmg_tnsr = torch.cat([scale_pred, scale_gt])
+                #        img_vis = draw_bounding_boxes(crop_vis, scale_gt, colors="red", width=3)
+                        #img_vis = draw_bounding_boxes(crop_vis, scale_pred,labels=pred_phrases, colors="green", width=3)
+                        #img_vis = img_vis/255.
+                        #save_image(img_vis, f'test_vis_crops/{pc}_{file_name}')
+                
+                #print(f"Length of filtered boxes total: {len_post_filt}") 
+                if not isinstance(scaled_pred_bbox_lst, torch.Tensor):
+                    pred = torch.Tensor(scaled_pred_bbox_lst)
+                    
+                    if pred.dim() == 1:
+                        pred = pred.unsqueeze(0)
+
+                if not isinstance(pred_lbl_lst, np.ndarray):
+                    label = np.array(pred_lbl_lst)
+
+                if not isinstance(pred_conf_lst, torch.Tensor):
+                    conf = torch.Tensor(pred_conf_lst)
+                if len(pred[0]) != 0:
+                    idx = ops.nms(boxes=pred, scores=conf, iou_threshold=nms_iou_threshold)
+                    pred = pred[idx]
+                    conf = conf[idx]
+                    label = label[idx]
+
+                if len(scaled_gt_bbox_lst) != 0:
+                    scaled_gt_bbox_tnr = torch.Tensor(scaled_gt_bbox_lst)
+                else:
+                    scaled_gt_bbox_tnr = torch.Tensor([])
+                if (len(scaled_pred_bbox_lst) != 0):
+                    ori_img = draw_bounding_boxes(ori_img, pred, colors="green", width=3)
+                if (len(scaled_gt_bbox_lst) != 0):
+                    ori_img = draw_bounding_boxes(ori_img, scaled_gt_bbox_tnr.int(), colors="blue", width=3)
+                #img_vis = img_vis1 * 0.5 + img_vis2 * 0.5
+                img_vis = ori_img/255.
+                save_image(img_vis, f'debug_{exp_name}/{file_name}')
+                
+                #unique_bboxes, unique_lbls, unique_confs = remove_overlapping_bboxes(scaled_pred_bbox_lst, pred_lbl_lst, pred_conf_lst, iou_threshold=0.80)
+                #NOTE: Change required here if num categories change
+                #id_map = {'dent':0, 'scratch':1, 'missing':2, 'scraped':3, 'broken':4, 'others':5}
+
+                #unique_maps = [id_map[lbl] if lbl in id_map else 5 for lbl in unique_lbls]
+                
+                #data_per_predbox, data_per_gtbox = evaluate_detections(unique_bboxes, scaled_gt_bbox_lst, iou_threshold=0.5, distance_threshold=400)
+                #metrics = evaluate_detections(scaled_pred_bbox_lst, scaled_gt_bbox_lst, iou_threshold=0.5, distance_threshold=200)
+                #print(row["file_name"])
+                #print(scaled_gt_bbox_lst)
+                #print(scaled_pred_bbox_lst)
+                
+                all_names_lst.append(file_name)
+                all_car_bbox.append(car_bbox_resp.tolist())
+                all_gts.append(scaled_gt_bbox_lst)
+                all_preds.append(pred.tolist())
+                all_pred_lbls.append(label.tolist())
+                all_pred_confs.append(conf.tolist())
+                #all_metrics_per_pred.append(data_per_predbox)
+                #all_metrics_per_gt.append(data_per_gtbox)
+                all_gt_lbls.append(gt_lbl_name_lst)
+                
+                #precision, recall, ap, mean_ap = get_metrics(final_preds, final_gts, iou_threshold=0.2, num_classes=6)
+                #print(precision, recall, ap, mean_ap)
+                opt = {}
+                opt['cdn_url'] = key
+                opt['fname'] = file_name
+                opt['car_bbox'] = car_bbox_resp.tolist()
+                opt['damage_name_lst'] = damage_name_lst
+                opt['component_lst'] = component_lst
+                opt['gt_bboxes'] = scaled_gt_bbox_lst
+                opt['pred_bboxes'] = pred.tolist()
+                opt['pred_labels'] = label.tolist()
+                opt['pred_confs'] = conf.tolist()
+                accumulated_dicts.append(opt)
+
+                #if (idx + 1) % interval == 0:
+                result = pd.DataFrame(accumulated_dicts)
+                if not os.path.exists(f"test_results/"):
+                    os.makedirs(f"test_results/")
+                path = f"test_results/{exp_name}_{ckpt_name}.csv"
+                #result.to_csv(path, mode='a', header=not pd.io.common.file_exists(path), index=False)
+                accumulated_dicts.clear() 
+            #except Exception as e:
+            #    print(e)
+            #    print('Hit error skipping')
+            #    continue
 #    end = time.time()
 #    print(end-start)
 #    import ipdb;ipdb.set_trace()
@@ -1269,7 +1283,7 @@ def main(args):
         _load_output = model.load_state_dict(_tmp_st, strict=False)
     
     #Add repvit
-    repvit_model, rep_eval_on_format_results, rep_eval_kwargs = repvit_stuff()
+#    repvit_model, rep_eval_on_format_results, rep_eval_kwargs = repvit_stuff()
     
     
     with open(args.datasets) as f:
@@ -1287,8 +1301,11 @@ def main(args):
     ckpt_name = ckpt_path.split('/')[-1].split('.')[0]
     exp_name = ckpt_path.split('/')[-2]
     # eval
+#    evaluate(
+#        model, criterion, repvit_model, ckpt_name, exp_name, rep_eval_on_format_results, rep_eval_kwargs, postprocessors, data_loader_val, device, args.output_dir, args=args, logger=(logger if args.save_log else None)
+#    )
     evaluate(
-        model, criterion, repvit_model, ckpt_name, exp_name, rep_eval_on_format_results, rep_eval_kwargs, postprocessors, data_loader_val, device, args.output_dir, args=args, logger=(logger if args.save_log else None)
+        model, criterion, ckpt_name, exp_name, postprocessors, data_loader_val, device, args.output_dir, args=args, logger=(logger if args.save_log else None)
     )
     print('eval done')   
 if __name__ == '__main__':
