@@ -18,8 +18,10 @@ from util.utils import  BestMetricHolder
 import util.misc as utils
 
 import datasets
-from datasets import build_dataset, get_coco_api_from_dataset
+from datasets import get_coco_api_from_dataset, build_dataset
+#from datasets import get_coco_api_from_dataset, build_crop_dataset
 from engine_multi import evaluate, train_one_epoch
+#from engine_new import evaluate, train_one_epoch
 
 from groundingdino.util.utils import clean_state_dict
 import warnings
@@ -263,20 +265,20 @@ def main(args):
 
     param_dicts = get_param_dict(args, model_without_ddp)
     
-#    # freeze some layers
-#    if args.freeze_keywords is not None:
-#        for name, parameter in model.named_parameters():
-#            #new addition begins to freeze everything except attn
-#            if 'attn' in name:
-#                parameter.requires_grad_(True)
-#                print('UnFROZEN' , name)
-#            #new addition ends
-#            else:
-#                for keyword in args.freeze_keywords:
-#                    if keyword in name:
-#                        parameter.requires_grad_(False)
-#                        print('FROZEN' , name)
-#                        break
+    # freeze some layers
+    if args.freeze_keywords is not None:
+        for name, parameter in model.named_parameters():
+            #new addition begins to freeze everything except attn
+            if 'attn' in name:
+                parameter.requires_grad_(True)
+                print('UnFROZEN' , name)
+            #new addition ends
+            else:
+                for keyword in args.freeze_keywords:
+                    if keyword in name:
+                        parameter.requires_grad_(False)
+                        print('FROZEN' , name)
+                        break
 
     # freeze some layers
     # if args.freeze_keywords is not None:
@@ -298,16 +300,19 @@ def main(args):
         num_of_dataset_train = len(dataset_meta["train"])
         if num_of_dataset_train == 1:
             dataset_train = build_dataset(image_set='train', args=args, datasetinfo=dataset_meta["train"][0])
+            #dataset_train = build_crop_dataset(image_set='train', args=args, datasetinfo=dataset_meta["train"][0])
         else:
             from torch.utils.data import ConcatDataset
             dataset_train_list = []
             for idx in range(len(dataset_meta["train"])):
                 dataset_train_list.append(build_dataset(image_set='train', args=args, datasetinfo=dataset_meta["train"][idx]))
+                #dataset_train_list.append(build_crop_dataset(image_set='train', args=args, datasetinfo=dataset_meta["train"][idx]))
             dataset_train = ConcatDataset(dataset_train_list)
         logger.debug("build dataset, done.")
         logger.debug(f'number of training dataset: {num_of_dataset_train}, samples: {len(dataset_train)}')
         
     dataset_val = build_dataset(image_set='val', args=args, datasetinfo=dataset_meta["val"][0])
+    #dataset_val = build_crop_dataset(image_set='val', args=args, datasetinfo=dataset_meta["val"][0])
     if args.distributed:
         sampler_val = DistributedSampler(dataset_val, shuffle=False)
         if not args.eval:
@@ -321,18 +326,17 @@ def main(args):
         batch_sampler_train = torch.utils.data.BatchSampler(
             sampler_train, args.batch_size, drop_last=True)
         data_loader_train = DataLoader(dataset_train, batch_sampler=batch_sampler_train,
-                                    collate_fn=utils.collate_fn, num_workers=0) #args.num_workers
+                                    collate_fn=utils.collate_fn, num_workers=args.num_workers) #args.num_workers
     
     #NOTE: Change val batch size here
     data_loader_val = DataLoader(dataset_val, 1, sampler=sampler_val,
-                                 drop_last=False, collate_fn=utils.collate_fn, num_workers=0) #args.num_workers
+                                 drop_last=False, collate_fn=utils.collate_fn, num_workers=args.num_workers) #args.num_workers
     if args.onecyclelr:
         lr_scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=args.lr, steps_per_epoch=len(data_loader_train), epochs=args.epochs, pct_start=0.2)
     elif args.multi_step_lr:
         lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=args.lr_drop_list)
     else:
         lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, args.lr_drop)
-
 
     base_ds = get_coco_api_from_dataset(dataset_val)
 
@@ -430,62 +434,66 @@ def main(args):
                 utils.save_on_master(weights, checkpoint_path)
                 
         # eval
-        test_stats, coco_evaluator, loss_value = evaluate(
+#        test_stats, coco_evaluator, loss_value = evaluate(
+#            model, criterion, postprocessors, data_loader_val, base_ds, device, args.output_dir,
+#            wo_class_error=wo_class_error, args=args, logger=(logger if args.save_log else None)
+#        )
+        loss_value = evaluate(
             model, criterion, postprocessors, data_loader_val, base_ds, device, args.output_dir,
             wo_class_error=wo_class_error, args=args, logger=(logger if args.save_log else None)
         )
         loss_track.append(loss_value)
         torch.save(loss_track, os.path.join(output_dir, 'val_loss.pt'))
-        map_regular = test_stats['coco_eval_bbox'][0]
-        _isbest = best_map_holder.update(map_regular, epoch, is_ema=False)
-        if _isbest:
-            checkpoint_path = output_dir / 'checkpoint_best_regular.pth'
-            utils.save_on_master({
-                'model': model_without_ddp.state_dict(),
-                'optimizer': optimizer.state_dict(),
-                'lr_scheduler': lr_scheduler.state_dict(),
-                'epoch': epoch,
-                'args': args,
-            }, checkpoint_path)
-        log_stats = {
-            **{f'train_{k}': v for k, v in train_stats.items()},
-            **{f'test_{k}': v for k, v in test_stats.items()},
-        }
-        
-        try:
-            log_stats.update({'now_time': str(datetime.datetime.now())})
-        except:
-            pass
-        
-        epoch_time = time.time() - epoch_start_time
-        epoch_time_str = str(datetime.timedelta(seconds=int(epoch_time)))
-        log_stats['validation_loss'] = loss_value
-        log_stats['epoch_time'] = epoch_time_str
-
-        if args.output_dir and utils.is_main_process():
-            with (output_dir / "log.txt").open("a") as f:
-                f.write(json.dumps(log_stats) + "\n")
-
-            # for evaluation logs
-            if coco_evaluator is not None:
-                (output_dir / 'eval').mkdir(exist_ok=True)
-                if "bbox" in coco_evaluator.coco_eval:
-                    filenames = ['latest.pth']
-                    if epoch % 50 == 0:
-                        filenames.append(f'{epoch:03}.pth')
-                    for name in filenames:
-                        torch.save(coco_evaluator.coco_eval["bbox"].eval,
-                                   output_dir / "eval" / name)
-        #Early stopping criteria
-        if len(loss_track) >= 2:
-            for i in range(1,len(loss_track)):
-                if loss_track[i] > loss_track[i-1]:
-                    early_stopping_cnt += 1
-                    if early_stopping_cnt == 2000:
-                        print('Early stopping')
-                        #quit()
-                else:
-                    early_stopping_cnt = 0
+#        map_regular = test_stats['coco_eval_bbox'][0]
+#        _isbest = best_map_holder.update(map_regular, epoch, is_ema=False)
+#        if _isbest:
+#            checkpoint_path = output_dir / 'checkpoint_best_regular.pth'
+#            utils.save_on_master({
+#                'model': model_without_ddp.state_dict(),
+#                'optimizer': optimizer.state_dict(),
+#                'lr_scheduler': lr_scheduler.state_dict(),
+#                'epoch': epoch,
+#                'args': args,
+#            }, checkpoint_path)
+#        log_stats = {
+#            **{f'train_{k}': v for k, v in train_stats.items()},
+#            **{f'test_{k}': v for k, v in test_stats.items()},
+#        }
+#        
+#        try:
+#            log_stats.update({'now_time': str(datetime.datetime.now())})
+#        except:
+#            pass
+#        
+#        epoch_time = time.time() - epoch_start_time
+#        epoch_time_str = str(datetime.timedelta(seconds=int(epoch_time)))
+#        log_stats['validation_loss'] = loss_value
+#        log_stats['epoch_time'] = epoch_time_str
+#
+#        if args.output_dir and utils.is_main_process():
+#            with (output_dir / "log.txt").open("a") as f:
+#                f.write(json.dumps(log_stats) + "\n")
+#
+#            # for evaluation logs
+#            if coco_evaluator is not None:
+#                (output_dir / 'eval').mkdir(exist_ok=True)
+#                if "bbox" in coco_evaluator.coco_eval:
+#                    filenames = ['latest.pth']
+#                    if epoch % 50 == 0:
+#                        filenames.append(f'{epoch:03}.pth')
+#                    for name in filenames:
+#                        torch.save(coco_evaluator.coco_eval["bbox"].eval,
+#                                   output_dir / "eval" / name)
+#        #Early stopping criteria
+#        if len(loss_track) >= 2:
+#            for i in range(1,len(loss_track)):
+#                if loss_track[i] > loss_track[i-1]:
+#                    early_stopping_cnt += 1
+#                    if early_stopping_cnt == 2000:
+#                        print('Early stopping')
+#                        #quit()
+#                else:
+#                    early_stopping_cnt = 0
 
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
